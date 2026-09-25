@@ -170,6 +170,7 @@ public final class GLiNERDecideClassifier: @unchecked Sendable {
     private let useCompiledGraph: Bool
     private let useFastAttention: Bool
     private let useCustomRelativeKernel: Bool
+    private let useFusedAttentionKernel: Bool
 
     private lazy var compiledForward: @Sendable ([MLXArray]) -> [MLXArray] = {
         compile { [self] arrays in
@@ -190,7 +191,8 @@ public final class GLiNERDecideClassifier: @unchecked Sendable {
         useFusedKernels: Bool = false,
         useCompiledGraph: Bool = false,
         useFastAttention: Bool = true,
-        useCustomRelativeKernel: Bool = false
+        useCustomRelativeKernel: Bool = false,
+        useFusedAttentionKernel: Bool = false
     ) throws {
         let store = try WeightStore(url: weightsURL)
         self.configuration = configuration
@@ -225,10 +227,13 @@ public final class GLiNERDecideClassifier: @unchecked Sendable {
         relativeProjections = loadedRelativeProjections
         classifier0 = try LinearWeight(store, "classifier.0")
         classifier2 = try LinearWeight(store, "classifier.2")
-        fusedKernels = (useFusedKernels || useCustomRelativeKernel) ? FusedKernels() : nil
+        fusedKernels = (useFusedKernels || useCustomRelativeKernel || useFusedAttentionKernel)
+            ? FusedKernels()
+            : nil
         self.useCompiledGraph = useCompiledGraph
         self.useFastAttention = useFastAttention
         self.useCustomRelativeKernel = useCustomRelativeKernel
+        self.useFusedAttentionKernel = useFusedAttentionKernel
         normalizedRelative.eval()
         for projection in loadedRelativeProjections {
             projection.query.eval()
@@ -328,6 +333,25 @@ public final class GLiNERDecideClassifier: @unchecked Sendable {
                     MLXArray(0.0, dtype: .float16),
                     MLXArray(-65_504.0, dtype: .float16)
                 )
+
+                if useFusedAttentionKernel {
+                    return fusedKernels!.fusedAttention(
+                        queries: q,
+                        keys: k,
+                        values: v,
+                        positionKey: positionKey,
+                        positionQuery: positionQuery,
+                        c2pIndices: relative.c2pIndices,
+                        p2cIndices: relative.p2cIndices,
+                        keyMask: additiveKeyMask,
+                        scale: 1.0 / Float(configuration.headSize * 3).squareRoot(),
+                        batch: batch,
+                        heads: configuration.numAttentionHeads,
+                        sequenceLength: sequenceLength,
+                        headDimension: configuration.headSize,
+                        positionCount: 512
+                    ).reshaped([batch, sequenceLength, configuration.hiddenSize])
+                }
 
                 let relativeBias: MLXArray
                 if useCustomRelativeKernel {

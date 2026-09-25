@@ -71,6 +71,27 @@ throughput by about 5% over batch 8; batch 1 remains the latency-optimized mode.
 The phase-2 comparison is reproduced by adding `--batch-size 32` to the
 baseline command above.
 
+### Phase 3 — fully fused DeBERTa attention
+
+A custom Metal kernel now owns the complete DeBERTa attention operation:
+
+```text
+QK + relative C2P/P2C bias + mask + softmax + V accumulation
+```
+
+It is correct within FP16 tolerance, including the full public split:
+
+| Runtime at batch 32 | Accuracy | Throughput |
+|---|---:|---:|
+| Native MPS baseline | **64.41%** | 14.44 rows/s |
+| Swift/MLX built-in fused SDPA | **64.24%** | **31.39 rows/s** |
+| Swift custom fully fused attention | **64.24%** | 20.10 rows/s |
+
+Native/Swift agreement remains **99.12%**, but the custom attention kernel is
+slower than MLX's built-in fused SDPA on this M1 Max. It remains opt-in via
+`--fused-attention-kernel`; the default stays on the built-in path.
+
+
 
 ## Short-request microbenchmark
 

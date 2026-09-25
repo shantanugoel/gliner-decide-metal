@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=0, help="Limit examples per domain; 0 means all 100")
     p.add_argument("--skip-native", action="store_true")
     p.add_argument("--skip-swift", action="store_true")
+    p.add_argument("--fused-attention-kernel", action="store_true")
     p.add_argument("--native-device", choices=("cpu", "mps"), default="mps")
     p.add_argument("--output", type=Path)
     return p.parse_args()
@@ -300,6 +301,8 @@ def evaluate_swift(
             "--compiled",
             "--fast-attention",
         ]
+        if args.fused_attention_kernel:
+            command.append("--fused-attention-kernel")
         print("$", " ".join(command), flush=True)
         completed = subprocess.run(command, check=True, capture_output=True, text=True)
         print(completed.stdout, end="", flush=True)
@@ -348,6 +351,7 @@ def main() -> None:
         "examples": len(examples),
         "batch_size": args.batch_size,
         "length_buckets": args.buckets,
+        "fused_attention_kernel": args.fused_attention_kernel,
     }
     if not args.skip_native:
         print("running native baseline...", flush=True)

@@ -62,6 +62,7 @@ struct Options {
     var compiled = false
     var fastAttention = true
     var customRelative = false
+    var fusedAttentionKernel = false
     var batchSize = 0
     var padBatch = false
     var output: String?
@@ -91,6 +92,7 @@ struct Options {
             case "--fast-attention": fastAttention = true
             case "--generic-attention": fastAttention = false
             case "--custom-relative": customRelative = true
+            case "--fused-attention-kernel": fusedAttentionKernel = true
             case "--batch-size": batchSize = Int(nextValue()) ?? batchSize
             case "--pad-batch": padBatch = true
             case "--help", "-h":
@@ -124,6 +126,8 @@ func printUsage() {
                        use the explicit DeBERTa score/softmax implementation
     --custom-relative
                        use the experimental custom relative-bias kernel
+    --fused-attention-kernel
+                       use the experimental fully fused attention Metal kernel
     --batch-size N     process all rows in input file in chunks of N
     --pad-batch        pad the final partial chunk to the full batch size
     --output PATH      write logits as safetensors
@@ -227,7 +231,8 @@ do {
         useFusedKernels: options.fused,
         useCompiledGraph: options.compiled,
         useFastAttention: options.fastAttention,
-        useCustomRelativeKernel: options.customRelative
+        useCustomRelativeKernel: options.customRelative,
+        useFusedAttentionKernel: options.fusedAttentionKernel
     )
     let input = try DecisionInput(url: inputsURL)
 
