@@ -10,7 +10,7 @@ classification MLP. GLiNER span, relation, and count heads are intentionally not
 loaded because the Core ML reference path used as the baseline exports only the
 classification path.
 
-## Fast-decisions baseline
+## Baseline comparison
 
 The first full comparison uses the public `fastino/fast-decisions` development
 split: 17 domains × 100 examples = 1,700 examples, dataset revision
@@ -19,21 +19,24 @@ split: 17 domains × 100 examples = 1,700 examples, dataset revision
 | Runtime | Accuracy | Macro accuracy | Throughput |
 |---|---:|---:|---:|
 | Native `fastino/GLiNER2.5-Decide`, MPS, batch 8 | **64.41%** | 64.41% | 13.46 rows/s |
-| Swift/MLX runtime, compiled GPU graph, batch 8 | **64.24%** | 64.24% | **28.72 rows/s** |
+| Swift/MLX final build, built-in fused SDPA, dynamic buckets, batch 32 | **64.24%** | 64.24% | **31.39 rows/s** |
 
-The native run is the base-model reference. The Swift run groups inputs into
-L256/L512 buckets, evaluates all heads/labels through the same preprocessing,
-and excludes model initialization plus one warmup batch from throughput.
-Native/Swift prediction agreement is **99.12%**; the three differing examples
-account for the 0.18-point accuracy difference.
+The native run is the base-model reference. The Swift row is the final default
+path with MLX's built-in fused SDPA (the experimental fully fused custom
+attention kernel is disabled), dynamic L32/L64/L96/L128/L256/L512 buckets,
+and batch 32. It uses the same preprocessed arrays and excludes model
+initialization plus one warmup batch from throughput. Native/Swift prediction
+agreement is **99.12%**; the three differing examples account for the 0.18-point
+accuracy difference.
 
 Reproduce with:
 
 ```bash
 uv run --python 3.12 --with-requirements Tools/requirements.txt \
   python Tools/evaluate_fast_decisions.py \
-  --batch-size 8 \
+  --batch-size 32 \
   --length 256 \
+  --buckets 32,64,96,128,256,512 \
   --artifacts Artifacts/fast-decisions-eval \
   --output Artifacts/fast-decisions-eval/baseline-results.json
 ```
