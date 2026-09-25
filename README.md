@@ -16,18 +16,31 @@ The first full comparison uses the public `fastino/fast-decisions` development
 split: 17 domains × 100 examples = 1,700 examples, dataset revision
 `1a33070c`. Accuracy is exact-set match against the reference label set.
 
-| Runtime | Accuracy | Macro accuracy | Throughput |
-|---|---:|---:|---:|
-| Native `fastino/GLiNER2.5-Decide`, MPS, batch 8 | **64.41%** | 64.41% | 13.46 rows/s |
-| Swift/MLX final build, built-in fused SDPA, dynamic buckets, batch 32 | **64.24%** | 64.24% | **31.39 rows/s** |
+| Runtime | Batch | Attention path | Accuracy | Throughput |
+|---|---:|---|---:|---:|
+| Python native `gliner2`/PyTorch MPS (no Swift) | 8 | native PyTorch | **64.41%** | 13.95 rows/s |
+| Python native `gliner2`/PyTorch MPS (no Swift) | 32 | native PyTorch | **64.41%** | **14.57 rows/s** |
+| Swift/MLX final build | 8 | built-in fused SDPA | 64.24% | 23.72 rows/s |
+| Swift/MLX final build | 16 | built-in fused SDPA | 64.24% | 27.21 rows/s |
+| Swift/MLX final build | 32 | built-in fused SDPA | 64.24% | **29.02 rows/s** |
+| Swift/MLX custom-attention experiment | 8 | custom fused Metal | 64.24% | 19.65 rows/s |
+| Swift/MLX custom-attention experiment | 16 | custom fused Metal | 64.24% | 18.41 rows/s |
+| Swift/MLX custom-attention experiment | 32 | custom fused Metal | 64.24% | 17.47 rows/s |
 
-The native run is the base-model reference. The Swift row is the final default
-path with MLX's built-in fused SDPA (the experimental fully fused custom
-attention kernel is disabled), dynamic L32/L64/L96/L128/L256/L512 buckets,
-and batch 32. It uses the same preprocessed arrays and excludes model
-initialization plus one warmup batch from throughput. Native/Swift prediction
-agreement is **99.12%**; the three differing examples account for the 0.18-point
+These are fresh full-split runs of the current build. The Python-native rows
+run `gliner2[local]` directly on MPS and do not load Swift or MLX. The Swift rows
+are launched by the Python evaluator, which prepares the exact same arrays and
+invokes `gliner-decide-metal`; the table therefore includes both “no Swift” and
+“Python driving the Swift runner” paths. Throughput excludes model initialization
+and one warmup batch. The default Swift path uses dynamic
+L32/L64/L96/L128/L256/L512 buckets and does **not** enable the experimental
+custom fully fused attention kernel. Native/Swift agreement for the final default
+path is **99.12%**; the three differing examples account for the 0.18-point
 accuracy difference.
+
+There is not yet a direct Python import binding for `GLiNERDecideCore`: Python
+can run the native model, or orchestrate the Swift executable, but the optimized
+MLX graph itself is currently a Swift library/binary.
 
 Reproduce with:
 
@@ -41,8 +54,12 @@ uv run --python 3.12 --with-requirements Tools/requirements.txt \
   --output Artifacts/fast-decisions-eval/baseline-results.json
 ```
 
+For the no-Swift Python-native row, add `--skip-swift`. For the custom
+attention row, add `--skip-native --fused-attention-kernel`.
+
 The complete per-domain results and predictions are written by the evaluator;
-large model/data artifacts are ignored by git.
+large model/data artifacts are ignored by git. The phase tables below are
+historical checkpoints; the table above is the latest full comparison.
 
 ### Phase 1 — dynamic length buckets
 
