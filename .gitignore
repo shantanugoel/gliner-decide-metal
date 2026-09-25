@@ -5,3 +5,6 @@ Artifacts/
 .DS_Store
 
 default.profraw
+
+__pycache__/
+*.pyc

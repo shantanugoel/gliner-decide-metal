@@ -91,6 +91,43 @@ Native/Swift agreement remains **99.12%**, but the custom attention kernel is
 slower than MLX's built-in fused SDPA on this M1 Max. It remains opt-in via
 `--fused-attention-kernel`; the default stays on the built-in path.
 
+### Phase 4 — native Swift tokenizer/schema frontend
+
+`NativeDecisionTokenizer` now loads the exact Decide Unigram tokenizer from
+local `tokenizer.json`/`tokenizer_config.json` assets through
+`swift-transformers`. It reproduces the inference collator's classification
+schema formatting, marker positions, lower-cased word splitting, sentence-final
+punctuation, padding, and dynamic length selection without Python at runtime.
+
+A new raw-text executable accepts either one request or JSONL:
+
+```bash
+xcodebuild build \
+  -scheme gliner-decide-raw \
+  -destination 'platform=macOS' \
+  -clonedSourcePackagesDirPath .build/SourcePackages \
+  -derivedDataPath .build/DerivedData
+
+.build/DerivedData/Build/Products/Debug/gliner-decide-raw \
+  --text 'My transfer is still pending and I used the wrong sort code. Can you stop it?' \
+  --tasks /path/to/tasks.json \
+  --tokenizer Artifacts/coreml-runtime \
+  --weights Artifacts/decide-classification-fp16.safetensors
+```
+
+Full 1,700-example frontend comparison:
+
+| Runtime | Accuracy | Throughput | Notes |
+|---|---:|---:|---|
+| Native MPS base model | 64.41% | 14.55 rows/s | Reference |
+| Swift frontend + MLX runtime | **64.47%** | **19.86 rows/s** | Includes native tokenization/schema formatting |
+
+The frontend agrees with the native base model on **99.94%** of predictions.
+Its 15.0 seconds of preprocessing and 65.4 seconds of inference produce an
+85.6-second end-to-end run; the lower throughput than the preprocessed-array
+benchmark is the expected cost of moving tokenization/schema construction into
+Swift.
+
 
 
 ## Short-request microbenchmark
