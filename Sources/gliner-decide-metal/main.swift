@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import GLiNERDecideCore
 import MLX
@@ -15,6 +16,7 @@ struct Options {
     var compiled = false
     var fastAttention = true
     var customRelative = false
+    var batchSize = 0
     var output: String?
 
     init(_ arguments: [String]) {
@@ -42,6 +44,7 @@ struct Options {
             case "--fast-attention": fastAttention = true
             case "--generic-attention": fastAttention = false
             case "--custom-relative": customRelative = true
+            case "--batch-size": batchSize = Int(nextValue()) ?? batchSize
             case "--help", "-h":
                 printUsage()
                 exit(0)
@@ -73,6 +76,7 @@ func printUsage() {
                        use the explicit DeBERTa score/softmax implementation
     --custom-relative
                        use the experimental custom relative-bias kernel
+    --batch-size N     process all rows in input file in chunks of N
     --output PATH      write logits as safetensors
     """)
 }
@@ -181,6 +185,50 @@ do {
     print("device: \(Device.defaultDevice())")
     print("weights: \(weightsURL.path)")
     print("inputs: \(inputsURL.path)")
+
+    if options.batchSize > 0 {
+        let count = input.inputIDs.shape[0]
+        precondition(count > 0, "batch input must contain at least one row")
+        // Warm the shape-specific compiled graph before measuring throughput.
+        if max(0, options.warmup) > 0 {
+            let warmEnd = min(options.batchSize, count)
+            let warmChunk = DecisionInput(
+                inputIDs: input.inputIDs[0 ..< warmEnd],
+                attentionMask: input.attentionMask[0 ..< warmEnd],
+                markerIndices: input.markerIndices[0 ..< warmEnd],
+                markerMask: input.markerMask[0 ..< warmEnd]
+            )
+            for _ in 0 ..< max(1, options.warmup) {
+                _ = model.classify(warmChunk)
+            }
+        }
+        let started = DispatchTime.now().uptimeNanoseconds
+        var pieces: [MLXArray] = []
+        var offset = 0
+        while offset < count {
+            let end = min(offset + options.batchSize, count)
+            let chunk = DecisionInput(
+                inputIDs: input.inputIDs[offset ..< end],
+                attentionMask: input.attentionMask[offset ..< end],
+                markerIndices: input.markerIndices[offset ..< end],
+                markerMask: input.markerMask[offset ..< end]
+            )
+            let result = model.classify(chunk)
+            pieces.append(result.logits[0 ..< (end - offset)])
+            offset = end
+        }
+        let logits = concatenated(pieces, axis: 0)
+        logits.eval()
+        let elapsed = DispatchTime.now().uptimeNanoseconds - started
+        print("batch_count: \(count)")
+        print(String(format: "batch_total_ms: %.3f", Double(elapsed) / 1_000_000))
+        print(String(format: "batch_rows_per_sec: %.3f", Double(count) / (Double(elapsed) / 1_000_000_000)))
+        if let output = options.output {
+            try save(arrays: ["logits": logits], url: URL(fileURLWithPath: output))
+            print("output: \(output)")
+        }
+        exit(0)
+    }
 
     for _ in 0 ..< max(0, options.warmup) {
         _ = model.classify(input)

@@ -1,3 +1,4 @@
+datasets>=4,<5
 gliner2[local]==2.0.0
 huggingface-hub>=0.34,<1
 numpy>=2,<2.3
