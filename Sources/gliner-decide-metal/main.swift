@@ -4,6 +4,52 @@ import GLiNERDecideCore
 import MLX
 import MLXFast
 
+func makeBatchChunk(
+    _ input: DecisionInput,
+    start: Int,
+    end: Int,
+    padTo: Int
+) -> (DecisionInput, Int) {
+    let validCount = end - start
+    let valid = DecisionInput(
+        inputIDs: input.inputIDs[start ..< end],
+        attentionMask: input.attentionMask[start ..< end],
+        markerIndices: input.markerIndices[start ..< end],
+        markerMask: input.markerMask[start ..< end]
+    )
+    guard validCount < padTo else { return (valid, validCount) }
+
+    let lastStart = validCount - 1
+    let lastIDs = valid.inputIDs[lastStart ..< validCount]
+    let lastMask = valid.attentionMask[lastStart ..< validCount]
+    let lastMarkers = valid.markerIndices[lastStart ..< validCount]
+    let lastMarkerMask = valid.markerMask[lastStart ..< validCount]
+    let padCount = padTo - validCount
+    let idsShape = [padCount] + Array(lastIDs.shape.dropFirst())
+    let maskShape = [padCount] + Array(lastMask.shape.dropFirst())
+    let markerShape = [padCount] + Array(lastMarkers.shape.dropFirst())
+    let markerMaskShape = [padCount] + Array(lastMarkerMask.shape.dropFirst())
+    let padded = DecisionInput(
+        inputIDs: concatenated([
+            valid.inputIDs,
+            MLX.broadcast(lastIDs, to: idsShape),
+        ], axis: 0),
+        attentionMask: concatenated([
+            valid.attentionMask,
+            MLX.broadcast(lastMask, to: maskShape),
+        ], axis: 0),
+        markerIndices: concatenated([
+            valid.markerIndices,
+            MLX.broadcast(lastMarkers, to: markerShape),
+        ], axis: 0),
+        markerMask: concatenated([
+            valid.markerMask,
+            MLX.broadcast(lastMarkerMask, to: markerMaskShape),
+        ], axis: 0)
+    )
+    return (padded, validCount)
+}
+
 struct Options {
     var weights = "Artifacts/decide-classification-fp16.safetensors"
     var inputs = "Artifacts/sample-inputs.safetensors"
@@ -17,6 +63,7 @@ struct Options {
     var fastAttention = true
     var customRelative = false
     var batchSize = 0
+    var padBatch = false
     var output: String?
 
     init(_ arguments: [String]) {
@@ -45,6 +92,7 @@ struct Options {
             case "--generic-attention": fastAttention = false
             case "--custom-relative": customRelative = true
             case "--batch-size": batchSize = Int(nextValue()) ?? batchSize
+            case "--pad-batch": padBatch = true
             case "--help", "-h":
                 printUsage()
                 exit(0)
@@ -77,6 +125,7 @@ func printUsage() {
     --custom-relative
                        use the experimental custom relative-bias kernel
     --batch-size N     process all rows in input file in chunks of N
+    --pad-batch        pad the final partial chunk to the full batch size
     --output PATH      write logits as safetensors
     """)
 }
@@ -192,11 +241,11 @@ do {
         // Warm the shape-specific compiled graph before measuring throughput.
         if max(0, options.warmup) > 0 {
             let warmEnd = min(options.batchSize, count)
-            let warmChunk = DecisionInput(
-                inputIDs: input.inputIDs[0 ..< warmEnd],
-                attentionMask: input.attentionMask[0 ..< warmEnd],
-                markerIndices: input.markerIndices[0 ..< warmEnd],
-                markerMask: input.markerMask[0 ..< warmEnd]
+            let (warmChunk, _) = makeBatchChunk(
+                input,
+                start: 0,
+                end: warmEnd,
+                padTo: options.padBatch ? options.batchSize : warmEnd
             )
             for _ in 0 ..< max(1, options.warmup) {
                 _ = model.classify(warmChunk)
@@ -207,14 +256,14 @@ do {
         var offset = 0
         while offset < count {
             let end = min(offset + options.batchSize, count)
-            let chunk = DecisionInput(
-                inputIDs: input.inputIDs[offset ..< end],
-                attentionMask: input.attentionMask[offset ..< end],
-                markerIndices: input.markerIndices[offset ..< end],
-                markerMask: input.markerMask[offset ..< end]
+            let (chunk, validCount) = makeBatchChunk(
+                input,
+                start: offset,
+                end: end,
+                padTo: options.padBatch ? options.batchSize : (end - offset)
             )
             let result = model.classify(chunk)
-            pieces.append(result.logits[0 ..< (end - offset)])
+            pieces.append(result.logits[0 ..< validCount])
             offset = end
         }
         let logits = concatenated(pieces, axis: 0)

@@ -55,6 +55,22 @@ request to the smallest bucket that fits its schema and text. On the same
 Bucket distribution: 7 examples at L96, 145 at L128, 1,424 at L256, and 124 at
 L512. Accuracy and native/Swift agreement were unchanged at 99.12%.
 
+### Phase 2 — batch scheduling
+
+The Swift batch runner now supports fixed-size chunks, optional final-chunk
+padding, and multiple rows per compiled graph invocation. A full 1,700-example
+sweep selected batch 32 as the best throughput point on this M1 Max:
+
+| Runtime at batch 32 | Accuracy | Throughput |
+|---|---:|---:|
+| Native MPS baseline | **64.41%** | 14.55 rows/s |
+| Swift/MLX dynamic buckets | **64.24%** | **31.39 rows/s** |
+
+Native/Swift prediction agreement remains **99.12%**. Batch 32 improves Swift
+throughput by about 5% over batch 8; batch 1 remains the latency-optimized mode.
+The phase-2 comparison is reproduced by adding `--batch-size 32` to the
+baseline command above.
+
 
 ## Short-request microbenchmark
 

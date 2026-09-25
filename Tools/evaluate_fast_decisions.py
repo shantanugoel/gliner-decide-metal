@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--artifacts", type=Path, default=Path("Artifacts/fast-decisions-eval"))
     p.add_argument("--binary", type=Path, default=Path(".build/DerivedData/Build/Products/Debug/gliner-decide-metal"))
     p.add_argument("--weights", type=Path, default=Path("Artifacts/decide-classification-fp16.safetensors"))
-    p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--length", type=int, default=256, choices=(128, 256, 512))
     p.add_argument(
         "--buckets",
