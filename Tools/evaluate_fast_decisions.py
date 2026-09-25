@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weights", type=Path, default=Path("Artifacts/decide-classification-fp16.safetensors"))
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--length", type=int, default=256, choices=(128, 256, 512))
+    p.add_argument(
+        "--buckets",
+        default="32,64,96,128,256,512",
+        help="Comma-separated ascending dynamic length buckets",
+    )
     p.add_argument("--max-options", type=int, default=32)
     p.add_argument("--limit", type=int, default=0, help="Limit examples per domain; 0 means all 100")
     p.add_argument("--skip-native", action="store_true")
@@ -199,28 +204,34 @@ def prepare_swift_groups(
     tokenizer = load_extractor_tokenizer(str(runtime_dir))
     processor = SchemaTransformer(tokenizer=tokenizer, token_pooling="first")
     groups: dict[int, list[tuple[dict[str, Any], dict[str, np.ndarray]]]] = defaultdict(list)
+    buckets = sorted({int(value) for value in args.buckets.split(",") if value.strip()})
+    if not buckets or buckets[-1] < 512:
+        buckets.append(512)
+    if args.length not in buckets:
+        buckets.append(args.length)
+    buckets = sorted(set(buckets))
 
     for index, example in enumerate(examples):
-        chosen_length = args.length
-        while True:
+        arrays = None
+        chosen_length = buckets[-1]
+        for candidate in buckets:
             try:
                 arrays = prepare_decision(
                     processor,
                     example["text"],
                     task_dict(example),
-                    chosen_length,
+                    candidate,
                     4,
                     args.max_options,
                 )
+                chosen_length = candidate
                 break
-            except ValueError as exc:
-                if chosen_length == 512:
-                    raise
-                chosen_length = 256 if chosen_length == 128 else 512
-                if "require" not in str(exc) and chosen_length == args.length:
-                    # A schema can exceed the requested bucket even when text
-                    # does not; the larger bucket is the safe fallback.
-                    chosen_length = 512
+            except ValueError:
+                continue
+        if arrays is None:
+            raise ValueError(
+                f"Could not fit {example['uid']} into any bucket {buckets}"
+            )
 
         arrays = {name: np.ascontiguousarray(value) for name, value in arrays.items()}
         groups[chosen_length].append((example, arrays))
@@ -336,6 +347,7 @@ def main() -> None:
         "model_revision": MODEL_REVISION,
         "examples": len(examples),
         "batch_size": args.batch_size,
+        "length_buckets": args.buckets,
     }
     if not args.skip_native:
         print("running native baseline...", flush=True)

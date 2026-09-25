@@ -41,6 +41,20 @@ uv run --python 3.12 --with-requirements Tools/requirements.txt \
 The complete per-domain results and predictions are written by the evaluator;
 large model/data artifacts are ignored by git.
 
+### Phase 1 — dynamic length buckets
+
+The Swift evaluator now tries `L32, L64, L96, L128, L256, L512` and sends each
+request to the smallest bucket that fits its schema and text. On the same
+1,700-example comparison:
+
+| Runtime | Accuracy | Throughput | Change vs. previous Swift path |
+|---|---:|---:|---:|
+| Previous fixed L256/L512 Swift path | 64.24% | 28.72 rows/s | — |
+| Dynamic-bucket Swift path | **64.24%** | **29.89 rows/s** | **+4.1%** |
+
+Bucket distribution: 7 examples at L96, 145 at L128, 1,424 at L256, and 124 at
+L512. Accuracy and native/Swift agreement were unchanged at 99.12%.
+
 
 ## Short-request microbenchmark
 
