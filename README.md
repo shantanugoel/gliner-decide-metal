@@ -10,6 +10,136 @@ classification MLP. GLiNER span, relation, and count heads are intentionally not
 loaded because the Core ML reference path used as the baseline exports only the
 classification path.
 
+## Quick start
+
+This runtime is an encoder-based decision model: it returns one or more typed
+labels for a supplied task schema. It does not generate text and currently
+supports GLiNER's classification path, not span/relation extraction.
+
+### Requirements
+
+- Apple Silicon Mac
+- macOS 14 or newer
+- Xcode with the Metal toolchain
+- [`uv`](https://docs.astral.sh/uv/)
+
+### 1. Download and prepare the exact model
+
+```bash
+git clone https://github.com/shantanugoel/gliner-decide-metal.git
+cd gliner-decide-metal
+
+uv run --python 3.12 --with-requirements Tools/requirements.txt \
+  python Tools/prepare_model.py \
+  --output Artifacts \
+  --skip-reference
+```
+
+This downloads the tokenizer and the classification-only FP16 weights from
+`fastino/GLiNER2.5-Decide`. Model weights are not committed to this repository.
+
+### 2. Build the Swift runner
+
+```bash
+xcodebuild build \
+  -scheme gliner-decide-raw \
+  -destination 'platform=macOS' \
+  -clonedSourcePackagesDirPath .build/SourcePackages \
+  -derivedDataPath .build/DerivedData
+```
+
+### 3. Describe the allowed decisions
+
+Create `tasks.json`:
+
+```json
+{
+  "tasks": [
+    {
+      "name": "intent",
+      "labels": [
+        "order_status",
+        "refund_request",
+        "cancel_subscription",
+        "speak_to_human",
+        "other"
+      ],
+      "multiLabel": false
+    }
+  ]
+}
+```
+
+A request may contain multiple task heads. Set `multiLabel` to `true` and
+optionally provide `prompt` and `labelDescriptions` to match the schemas
+supported by the original model.
+
+### 4. Run raw text
+
+```bash
+.build/DerivedData/Build/Products/Debug/gliner-decide-raw \
+  --text 'Please cancel my subscription and refund the latest payment.' \
+  --tasks tasks.json \
+  --tokenizer Artifacts/coreml-runtime \
+  --weights Artifacts/decide-classification-fp16.safetensors
+```
+
+Example output:
+
+```json
+[
+  {
+    "task": "intent",
+    "labels": ["refund_request"],
+    "probabilities": [0.01, 0.97, 0.01, 0.005, 0.005]
+  }
+]
+```
+
+The exact probabilities depend on the input. The runner chooses the smallest
+supported sequence bucket automatically.
+
+For repeated or batched requests, pass JSONL input and write JSONL results:
+
+```bash
+.build/DerivedData/Build/Products/Debug/gliner-decide-raw \
+  --jsonl examples.jsonl \
+  --output results.json \
+  --tokenizer Artifacts/coreml-runtime \
+  --weights Artifacts/decide-classification-fp16.safetensors
+```
+
+Each input line has this form:
+
+```json
+{"id":"example-1","text":"...","tasks":[{"name":"intent","labels":["yes","no"],"multiLabel":false}]}
+```
+
+### Python usage
+
+The optimized MLX model does **not** yet have a direct Python import binding.
+Python can still run the original model without Swift:
+
+```bash
+uv run --python 3.12 --with 'gliner2[local]==2.0.0' python - <<'PY'
+from gliner2 import AutoExtractor
+
+model = AutoExtractor.from_pretrained(
+    "fastino/GLiNER2.5-Decide",
+    map_location="mps",
+    quantize=True,
+)
+print(model.classify_text(
+    "Please cancel my subscription and refund the latest payment.",
+    {"intent": ["refund_request", "cancel_subscription", "other"]},
+    include_confidence=True,
+))
+PY
+```
+
+Alternatively, the repository's Python evaluators can prepare inputs and invoke
+the Swift runner, as described below.
+
 ## Baseline comparison
 
 The first full comparison uses the public `fastino/fast-decisions` development
