@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+Artifacts/
+*.trace/
+.DS_Store
+
+default.profraw
